@@ -157,6 +157,64 @@ export function DeviceCompatibilitySettings({ onNotice }: { onNotice?: (message:
 
   const native = getNativeApi();
   const report = useMemo(() => {
+    /* ── 诊断区块 ────────────────────────────────────────────────
+       只读观测，不写入、不上传、不改变任何渲染结果与业务逻辑。
+       DIAG_BUILD_TAG 用于确认「打开的是不是含本次改动的构建」：
+       报告里看不到这个标记，说明部署还是旧代码，任何现象都不能用来判断。 */
+    const DIAG_BUILD_TAG = "diag-v2";
+    const layoutDiag = (() => {
+      if (typeof window === "undefined" || typeof document === "undefined") {
+        return "布局诊断：" + DIAG_BUILD_TAG + "（服务端渲染阶段，无浏览器信息）";
+      }
+      const root = document.documentElement;
+      const rootStyle = window.getComputedStyle(root);
+      const readVar = (name: string) => {
+        const inline = root.style.getPropertyValue(name).trim();
+        const computed = rootStyle.getPropertyValue(name).trim();
+        return computed + (inline ? "（行内写入：" + inline + "）" : "（未被行内覆盖）");
+      };
+      const box = (selector: string) => {
+        const el = document.querySelector<HTMLElement>(selector);
+        if (!el) return "未找到元素";
+        const rect = el.getBoundingClientRect();
+        return Math.round(rect.width) + " × " + Math.round(rect.height)
+          + " @ " + Math.round(rect.left) + "," + Math.round(rect.top);
+      };
+      const mq = (query: string) => window.matchMedia(query).matches ? "匹配" : "不匹配";
+      const shell = document.querySelector<HTMLElement>(".phone-shell");
+      const wrap = document.querySelector<HTMLElement>(".phone-shell-wrap");
+      const appRoot = document.querySelector<HTMLElement>(".app-root");
+      const workspace = document.querySelector<HTMLElement>(".phone-workspace");
+      const swipeLayer = document.querySelector<HTMLElement>(".phone-swipe-layer");
+      return [
+        "布局诊断：" + DIAG_BUILD_TAG,
+        "① 断点 (max-width:500px)：" + mq("(max-width: 500px)")
+          + "；原断点(含 hover/pointer)：" + mq("(max-width: 500px) and (hover: none) and (pointer: coarse)"),
+        "   hover:none " + mq("(hover: none)") + "；pointer:coarse " + mq("(pointer: coarse)"),
+        "② --phone-screen-width：" + readVar("--phone-screen-width"),
+        "   --phone-screen-height：" + readVar("--phone-screen-height"),
+        "   --compat-layout-scale：" + readVar("--compat-layout-scale"),
+        "   --mobile-keyboard-lift：" + readVar("--mobile-keyboard-lift"),
+        "   --status-bar-drop：" + readVar("--status-bar-drop"),
+        "③ .phone-shell：" + box(".phone-shell"),
+        "   .phone-shell-wrap：" + box(".phone-shell-wrap"),
+        "   .app-root：" + box(".app-root"),
+        "④ html overflow：" + rootStyle.overflow
+          + "；body overflow：" + (document.body ? window.getComputedStyle(document.body).overflow : "无 body"),
+        "   html 可滚动高度：" + root.scrollHeight + " / 可视 " + window.innerHeight,
+        "⑤ 手机壳圆角：" + (shell ? window.getComputedStyle(shell).borderRadius : "未找到")
+          + "；壳内边距：" + (shell ? window.getComputedStyle(shell).padding : "未找到"),
+        "   外框内边距：" + (wrap ? window.getComputedStyle(wrap).padding : "未找到")
+          + "；外框 transform：" + (wrap ? window.getComputedStyle(wrap).transform : "未找到"),
+        "   .app-root 宽/内边距：" + (appRoot ? window.getComputedStyle(appRoot).width + " / " + window.getComputedStyle(appRoot).padding : "未找到"),
+        "⑥ 翻页容器 .phone-workspace：" + box(".phone-workspace"),
+        "   workspace touch-action：" + (workspace ? window.getComputedStyle(workspace).touchAction : "未找到"),
+        "   swipe-layer：" + box(".phone-swipe-layer")
+          + "；transform：" + (swipeLayer ? window.getComputedStyle(swipeLayer).transform : "未找到"),
+        "   PointerEvent 支持：" + (typeof window.PointerEvent !== "undefined" ? "有" : "无")
+          + "；ontouchstart：" + ("ontouchstart" in window ? "有" : "无"),
+      ].join("\n");
+    })();
     const lines = [
       "小手机设备兼容性报告",
       "生成时间：" + new Date().toLocaleString(),
@@ -165,6 +223,9 @@ export function DeviceCompatibilitySettings({ onNotice }: { onNotice?: (message:
       "可视视口：" + metrics.visualWidth + " × " + metrics.visualHeight,
       "设备像素比 DPR：" + metrics.dpr,
       "方向：" + metrics.orientation,
+      "",
+      layoutDiag,
+      "",
       "UA：" + metrics.userAgent,
       "原生设备：" + (nativeSnapshot ? JSON.stringify({
         manufacturer: nativeSnapshot.manufacturer,
