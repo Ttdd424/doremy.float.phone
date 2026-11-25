@@ -7,6 +7,7 @@ import { CSSImportEnhancer } from "@/components/css-import-enhancer";
 import { PWAManifestInjector } from "@/components/pwa-manifest-injector";
 import { PWARegistrar } from "@/components/pwa-registrar";
 import { DeviceCompatibilityBootstrap } from "@/components/device-compatibility-bootstrap";
+import { NarrowViewportFlag } from "@/components/narrow-viewport-flag";
 import { GlobalNoticeHost } from "@/components/ui/global-notice-host";
 import "../styles/fonts.css";
 import "./globals.css";
@@ -46,6 +47,7 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body>
+        <NarrowViewportFlag />
         <PWAManifestInjector />
         <PWARegistrar />
         <DeviceCompatibilityBootstrap />
