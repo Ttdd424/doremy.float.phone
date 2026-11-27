@@ -80,6 +80,12 @@ import {
 import { customAppIdFromIconId, isCustomAppIconId, toCustomAppIconId } from "@/lib/custom-app-types";
 import type { InstalledCustomApp } from "@/lib/custom-app-types";
 import {
+  DESKTOP_BADGES_UPDATED_EVENT,
+  clearDesktopBadge,
+  loadDesktopBadges,
+  setForegroundDesktopIcon,
+} from "@/lib/desktop-badges";
+import {
   registerCustomAppBackgroundToolExecutor,
   type CustomAppToolExecutorPayload,
 } from "@/lib/custom-app-tool-runtime";
@@ -1374,6 +1380,8 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const activeAppRef = useRef<DesktopIconId | null>(null);
   const swipeBackGestureRef = useRef<{ pointerId: number; startX: number; startY: number; edge: "left" | "right"; horizontal: boolean } | null>(null);
   const [customAppBadges, setCustomAppBadges] = useState<Record<string, number>>({});
+  // 内置图标的桌面红点表（按桌面图标 id 记账，见 lib/desktop-badges.ts）
+  const [desktopBadges, setDesktopBadges] = useState<Record<string, { count: number }>>({});
   const [customAppBackgroundRuns, setCustomAppBackgroundRuns] = useState<CustomAppBackgroundEventRun[]>([]);
   const [customAppBackgroundToolRuns, setCustomAppBackgroundToolRuns] = useState<CustomAppBackgroundToolRun[]>([]);
   const backgroundRunSeqRef = useRef(0);
@@ -1419,6 +1427,9 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   const [draftTheme, setDraftTheme] = useState<ThemeProfile>(() => initialThemeProfile ?? readInitialThemeProfile());
   useEffect(() => {
     activeAppRef.current = activeApp;
+    // 前台登记：当前打开的内置 APP 有新内容时只更新「已读时间」、不亮红点；
+    // 回到桌面（activeApp=null）时清空登记，后续更新才会计数。
+    setForegroundDesktopIcon(activeApp);
   }, [activeApp]);
   // Listen for theme CSS updates from 小卷
   useEffect(() => {
@@ -1887,10 +1898,18 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
   }, []);
 
   useEffect(() => {
-    const refreshHostState = () => setCustomAppBadges(loadCustomAppBadges());
+    const refreshHostState = () => {
+      setCustomAppBadges(loadCustomAppBadges());
+      setDesktopBadges(loadDesktopBadges());
+    };
     refreshHostState();
     window.addEventListener(CUSTOM_APP_HOST_STATE_UPDATED_EVENT, refreshHostState);
-    return () => window.removeEventListener(CUSTOM_APP_HOST_STATE_UPDATED_EVENT, refreshHostState);
+    // 内置图标红点由各业务存储写入后广播，这里跟着刷新即可（无需轮询）
+    window.addEventListener(DESKTOP_BADGES_UPDATED_EVENT, refreshHostState);
+    return () => {
+      window.removeEventListener(CUSTOM_APP_HOST_STATE_UPDATED_EVENT, refreshHostState);
+      window.removeEventListener(DESKTOP_BADGES_UPDATED_EVENT, refreshHostState);
+    };
   }, []);
 
   useEffect(() => {
@@ -2704,6 +2723,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
 
   function openApp(iconId: DesktopIconId): void {
     if (isFolderIconId(iconId)) return; // 文件夹 tile 由点击处打开面板，不走这里
+    // 用户点开该图标 = 已看过里面的新内容：先清桌面红点，再走打开逻辑
+    // （文件夹成员也会经这里进来，所以文件夹面板里的图标点开后同样会清）
+    clearDesktopBadge(iconId);
     if (iconId === "heartcraft") {
       openBuiltinHeartcraft();
       return;
@@ -5361,11 +5383,12 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                               if (isFolderIconId(iconId)) {
                                 const folder = folders[iconId];
                                 if (!folder) return null;
-                                // 聊天图标不再聚合未读红点：未读提醒只保留在聊天会话列表内
+                                // 文件夹红点 = 成员红点之和：自定义 APP 走 customAppBadges，
+                                // 内置图标走 desktopBadges（内容更新红点）。
                                 const folderBadge = folder.icons.reduce((sum, memberId) => {
                                   const appId = customAppIdFromIconId(memberId);
                                   if (appId) return sum + (customAppBadges[appId] ?? 0);
-                                  return sum;
+                                  return sum + (desktopBadges[memberId]?.count ?? 0);
                                 }, 0);
                                 return (
                                   <button
@@ -5401,8 +5424,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                 : null;
                               const iconImageUrl = iconSkinUrl || customIconUrl;
                               const hasImageIcon = Boolean(iconImageUrl);
-                              // 聊天图标右上角不显示未读红点（用户偏好）：未读只在聊天会话列表内以红点展示
-                              const badgeCount = customApp ? customAppBadges[customApp.id] ?? 0 : 0;
+                              // 自定义 APP 仍走 customAppBadges；内置图标读 desktopBadges（内容更新红点）
+                              const badgeCount = customApp
+                                ? Math.max(customAppBadges[customApp.id] ?? 0, desktopBadges[iconId]?.count ?? 0)
+                                : desktopBadges[iconId]?.count ?? 0;
                               return (
                                 <button
                                   key={iconId}
@@ -5559,6 +5584,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                       : null;
                     const iconImageUrl = iconSkinUrl || customIconUrl;
                     const hasImageIcon = Boolean(iconImageUrl);
+                    // dock 与桌面图标同一套红点规则
+                    const dockBadgeCount = customApp
+                      ? Math.max(customAppBadges[customApp.id] ?? 0, desktopBadges[iconId]?.count ?? 0)
+                      : desktopBadges[iconId]?.count ?? 0;
                     const isDragging = dragItem?.type === "icon" && dragItem.id === iconId;
                     return (
                       <button
@@ -5597,6 +5626,11 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                           ) : customIconUrl ? null : (
                             <CustomAppGlyph seed={customApp?.name || icon.label} className="icon-glyph" />
                           )}
+                          {dockBadgeCount > 0 ? (
+                            <span className="desktop-icon-badge" aria-label={`${dockBadgeCount} 条未读`}>
+                              {dockBadgeCount > 99 ? "99+" : dockBadgeCount}
+                            </span>
+                          ) : null}
                         </span>
                         <span className="icon-label">{icon.label}</span>
                       </button>
@@ -5769,7 +5803,10 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#121110;color:rgb
                                 ? memberCustomApp.iconDataUrl ?? null
                                 : null;
                               const memberImageUrl = memberSkinUrl || memberCustomUrl;
-                              const memberBadge = memberCustomApp ? customAppBadges[memberCustomApp.id] ?? 0 : 0;
+                              // 与桌面图标一致：自定义 APP 走 customAppBadges，内置图标读 desktopBadges
+                              const memberBadge = memberCustomApp
+                                ? Math.max(customAppBadges[memberCustomApp.id] ?? 0, desktopBadges[memberId]?.count ?? 0)
+                                : desktopBadges[memberId]?.count ?? 0;
                               return (
                                 <button
                                   key={memberId}

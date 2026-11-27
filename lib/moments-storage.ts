@@ -7,6 +7,7 @@ import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { DEFAULT_MOMENTS_BILINGUAL_PROMPT } from "./bilingual-prompt-defaults";
 import { canCharacterSeeMomentPost, getVisibleMomentCommentsForCharacter } from "./character-world-storage";
 import { appendLifeTimelineEntry, loadVirtualLifeState, saveVirtualLifeState } from "./life/life-storage";
+import { markDesktopBadge } from "./desktop-badges";
 import {
     initMomentsDb,
     dbPutPost,
@@ -114,6 +115,11 @@ export function addMomentPost(post: Omit<MomentPost, "id" | "likes" | "createdAt
     };
     _postsCache = [newPost, ...loadMomentPosts()]; // newest first
     dbPutPost(newPost);
+    // 桌面图标红点：只对角色发的内容提示，用户自己发的不亮
+    // （用户正在朋友圈里时 markDesktopBadge 会因前台抑制自动跳过）
+    if (newPost.authorType === "character") {
+        markDesktopBadge("moments");
+    }
     try {
         const life = loadVirtualLifeState();
         if (life.settings.enabled) {

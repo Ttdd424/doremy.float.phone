@@ -20,6 +20,7 @@ import { resolveCharacterIdReference, resolveSessionCharacterIdentity } from "./
 import { migrateLegacyCharacterIdentityData } from "./character-id-migration";
 import { recordLifeDiagnostic } from "./life/life-diagnostics";
 import { recordPerformanceMetric } from "./performance-diagnostics";
+import { markDesktopBadge } from "./desktop-badges";
 
 export const DEFAULT_VISION_IMAGE_PROMPT_LIMIT = 1;
 export const MAX_VISION_IMAGE_PROMPT_LIMIT = 20;
@@ -1503,10 +1504,14 @@ export function saveChatSessions(sessions: ChatSession[]) {
     if (!_hydrated && typeof window !== "undefined") {
         console.warn("[ChatStorage] saveChatSessions before hydration; using additive write to avoid replacing existing sessions.");
         dbPutSessions(refreshed.items);
+        syncChatDesktopBadges();
         return;
     }
     if (normalized.changed || redirectedMessages > 0 || refreshed.changed) dbReplaceSessions(refreshed.items);
     else dbPutSessions(refreshed.items);
+    // 会话持久化是「未读被读掉」的唯一出口（标记已读、删除会话都会经过这里），
+    // 桌面红点在这里跟着重算，才能保证点开聊天后图标红点消失。
+    syncChatDesktopBadges();
 }
 
 export function createOrGetSession(contactId: string): ChatSession {
@@ -1598,6 +1603,28 @@ export function createResponseRoundId(): string {
 
 export function createToolExecutionId(): string {
     return `toolrun_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/**
+ * 把各会话未读数汇总到桌面图标红点（chat = 私聊合计，group_chat = 群聊合计）。
+ *
+ * 之所以用"绝对总数"而不是增量：会话的 unreadCount 是唯一事实来源，
+ * 用户读掉、撤回、删除会话时它会归零，这里跟着归零就不会出现"红点点了还在"。
+ * ignoreForeground 表示不因"聊天 APP 正开着"而抑制——是否已读完全由 unreadCount 决定，
+ * 否则在聊天 APP 里收到别的会话消息时红点会被误清。
+ */
+export function syncChatDesktopBadges(): void {
+    if (typeof window === "undefined") return;
+    let privateUnread = 0;
+    let groupUnread = 0;
+    for (const session of _sessionsCache) {
+        const unread = Math.max(0, Math.floor(Number(session.unreadCount) || 0));
+        if (unread <= 0) continue;
+        if (session.isGroup) groupUnread += unread;
+        else privateUnread += unread;
+    }
+    markDesktopBadge("chat", { count: privateUnread, absolute: true, ignoreForeground: true });
+    markDesktopBadge("group_chat", { count: groupUnread, absolute: true, ignoreForeground: true });
 }
 
 export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "status"> & {
@@ -1697,6 +1724,11 @@ export function pushChatMessage(msg: Omit<ChatMessage, "id" | "createdAt" | "sta
             saveChatSessions(sessions);
         }
     }
+
+    // 桌面图标红点：按"全站未读总数"同步聊天 / 群聊图标。
+    // 直接读会话的 unreadCount（它已经处理了"正在看这个会话就算已读"），
+    // 所以这里只需要把总数搬过去，不需要自己再判断一次可见性。
+    syncChatDesktopBadges();
 
     if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(CHAT_MESSAGE_PUSHED_EVENT, { detail: { message: newMsg } }));

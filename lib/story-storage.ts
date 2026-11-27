@@ -1,6 +1,7 @@
 import Dexie from "dexie";
 import { formatChatTimestamp } from "./llm-prompt-assembler";
 import { hydrateKvDb, kvGet, kvSet, registerKvMigration } from "./kv-db";
+import { markDesktopBadge } from "./desktop-badges";
 
 export type StoryUiPrefs = {
   hideBubble?: boolean;
@@ -921,6 +922,12 @@ export function pushStoryMessage(
   };
   _messagesCache.push(message);
   storyDb.messages.put(message).catch(() => undefined);
+
+  // 桌面图标红点：只有角色（assistant）推进剧情时才提示；用户自己发的不亮。
+  // 用户正在剧情 APP 里时由前台抑制自动跳过。
+  if (message.role === "assistant") {
+    markDesktopBadge("story");
+  }
 
   const previewSource = message.renderedContent || message.rawContent;
   const preview = previewSource.replace(/\s+/g, " ").trim().slice(0, 64);

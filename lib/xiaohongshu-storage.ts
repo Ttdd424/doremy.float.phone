@@ -1,5 +1,6 @@
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { resolveUserIdentity } from "./settings-storage";
+import { markDesktopBadge } from "./desktop-badges";
 import {
   DEFAULT_XIAOHONGSHU_PROFILE,
   DEFAULT_XIAOHONGSHU_SETTINGS,
@@ -383,6 +384,11 @@ export function loadXiaohongshuState(): XiaohongshuState {
 export function saveXiaohongshuState(state: XiaohongshuState): XiaohongshuState {
   const next = { ...state, updatedAt: new Date().toISOString() };
   kvSet(XHS_STATE_KEY, JSON.stringify(next));
+  // 桌面图标红点：按「未读通知条数」绝对同步（读掉通知后计数归零，红点自然消失）。
+  // ignoreForeground：用户正在小红书里浏览时，未读数本身已经是准确的已读判定，
+  // 这里不再用前台抑制去猜（否则在 APP 内也会被误清）。
+  const unreadNoticeCount = next.notifications.filter(notice => notice.unread === true).length;
+  markDesktopBadge("xiaohongshu", { count: unreadNoticeCount, absolute: true, ignoreForeground: true });
   return next;
 }
 

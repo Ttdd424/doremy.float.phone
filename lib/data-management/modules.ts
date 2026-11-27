@@ -168,6 +168,10 @@ const PRIMARY_DATA_MODULES: DataModuleDefinition[] = [
           "ai_phone_mascot_settings_v1",
           "ai_phone_css_assets_v1",
           "music-custom-bg-v1",
+          // 桌面图标红点（内置 APP 内容更新）与「上次点开时间」，
+          // 属于桌面显示状态，随桌面模块备份/导入/清除
+          "ai_phone_desktop_badges_v1",
+          "ai_phone_desktop_badge_clears_v1",
         ],
       },
     ],

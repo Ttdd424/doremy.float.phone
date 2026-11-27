@@ -1,5 +1,6 @@
 import { kvGet, kvRemove, kvSet, registerKvMigration } from "./kv-db";
 import { appendLifeTimelineEntry, loadVirtualLifeState, saveVirtualLifeState } from "./life/life-storage";
+import { markDesktopBadge } from "./desktop-badges";
 import {
   DEFAULT_DIARY_ENTRY_TIMER_SETTINGS,
   type DiaryEntry,
@@ -268,6 +269,11 @@ export function createDiaryEntry(input: DiaryEntryInput): DiaryEntry {
     updatedAt: now,
   };
   saveDiaryEntries([entry, ...loadDiaryEntries()]);
+  // 桌面图标红点：定时/角色写的日记才提示；用户自己手写的（trigger=manual）不亮。
+  // 角色正在手记 APP 里时会被前台抑制自动跳过。
+  if (entry.trigger !== "manual") {
+    markDesktopBadge("diary");
+  }
   try {
     const life = loadVirtualLifeState();
     if (life.settings.enabled) {

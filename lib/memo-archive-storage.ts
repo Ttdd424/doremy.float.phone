@@ -1,4 +1,5 @@
 import Dexie, { type Table } from "dexie";
+import { markDesktopBadge } from "./desktop-badges";
 export type MemoOwner = { type: "user" | "character"; id: string };
 export type MemoFolder = { id: string; owner: MemoOwner; name: string; color: string; order: number; createdAt: number; updatedAt: number };
 export type MemoTodo = { id: string; text: string; done: boolean; createdAt: number; completedAt?: number };
@@ -44,7 +45,7 @@ export async function createMemoFolder(owner:MemoOwner,name:string,color="#D8C39
 export async function updateMemoFolder(id:string,owner:MemoOwner,patch:Partial<Pick<MemoFolder,"name"|"color"|"order">>){const d=database();const f=await d.folders.get(id);if(!f||!same(f.owner,owner))throw Error("无权修改此档案盒");if(patch.order!==undefined){await d.transaction("rw",d.folders,async()=>{const rows=(await d.folders.toArray()).filter(x=>same(x.owner,owner)).sort((x,y)=>x.order-y.order);const from=rows.findIndex(x=>x.id===id);const [moving]=rows.splice(from,1);rows.splice(Math.max(0,Math.min(rows.length,patch.order!)),0,moving);for(let index=0;index<rows.length;index++)await d.folders.update(rows[index].id,{order:index,updatedAt:stamp()});});}else await d.folders.update(id,{...patch,updatedAt:stamp()});}
 export async function deleteMemoFolder(id:string,owner:MemoOwner,mode:"loose"|"recycle"="loose"){const f=await database().folders.get(id);if(!f||!same(f.owner,owner))throw Error("无权删除此档案盒");await database().transaction("rw",database().folders,database().notes,async()=>{for(const n of await database().notes.where("folderId").equals(id).toArray())if(same(n.owner,owner))await database().notes.update(n.id,{folderId:null,...(mode==="recycle"?{deletedAt:stamp()}:{}),updatedAt:stamp()});await database().folders.delete(id);});}
 export async function saveMemoNote(owner:MemoOwner,input:Partial<MemoNote>&Pick<MemoNote,"title"|"body">){const title=input.title.trim().slice(0,60);if(!title)throw Error("请填写标题");if(input.body.length>20000)throw Error("正文不能超过 20000 字");const old=input.id?await database().notes.get(input.id):undefined;if(old&&!same(old.owner,owner))throw Error("无权修改此备忘录");if(input.folderId){const f=await database().folders.get(input.folderId);if(!f||!same(f.owner,owner))throw Error("档案盒不属于当前空间");}const t=stamp();const note:MemoNote={id:old?.id??uid(),owner,folderId:("folderId" in input ? input.folderId : old?.folderId) ?? null,title,body:input.body,tags:[...new Set((input.tags??old?.tags??[]).map(x=>x.trim()).filter(Boolean))].slice(0,8),todos:(input.todos??old?.todos??[]).slice(0,100),pinned:input.pinned??old?.pinned??false,archived:input.archived??old?.archived??false,sharedWith:old?.sharedWith??[],createdAt:old?.createdAt??t,updatedAt:t,lastReviewedAt:old?.lastReviewedAt,nextReviewAt:old?.nextReviewAt};await database().notes.put(note);
-  if (owner.type === "character") { trackMemoMaintenanceChange(owner.id, note.id); writeMemoTimelineEvent(owner.id, note, old ? "updated" : "created"); }
+  if (owner.type === "character") { trackMemoMaintenanceChange(owner.id, note.id); writeMemoTimelineEvent(owner.id, note, old ? "updated" : "created"); markDesktopBadge("memo"); }
   else for (const characterId of note.sharedWith) writeMemoTimelineEvent(characterId, note, old ? "updated" : "created");
   return note;}
 export async function appendMemoTodos(owner:MemoOwner,noteId:string|undefined,items:Array<string|{text:string}>){
@@ -63,7 +64,7 @@ export async function appendMemoTodos(owner:MemoOwner,noteId:string|undefined,it
     saved={...current,todos:[...current.todos,...additions].slice(0,100),updatedAt:now};
     await d.notes.put(saved);
   });
-  if(saved&&owner.type==="character"){trackMemoMaintenanceChange(owner.id,saved.id);writeMemoTimelineEvent(owner.id,saved,"updated");}
+  if(saved&&owner.type==="character"){trackMemoMaintenanceChange(owner.id,saved.id);writeMemoTimelineEvent(owner.id,saved,"updated");markDesktopBadge("memo");}
   return {note:saved!,count:saved!.todos.length};
 }
 export async function moveMemoToRecycleBin(id:string,owner:MemoOwner){const n=await database().notes.get(id);if(!n||!same(n.owner,owner))throw Error("无权删除此备忘录");await database().notes.update(id,{deletedAt:stamp(),updatedAt:stamp()});
