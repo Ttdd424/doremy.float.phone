@@ -36,6 +36,24 @@ assert.match(lifeEngineSource, /parseGuidedScheduleResponse\(result\.content\.tr
 const lifeSchedulerSource = await readFile(new URL("../lib/life/life-proactive-scheduler.ts", import.meta.url), "utf8");
 assert.match(lifeSchedulerSource, /resolveSessionCharacterId\(item\) === character\.id/);
 
+// 消息页会话列表 / 全局检索 / 合并弹窗 / 删好友反应都必须按规范角色 ID 判定归属。
+// 曾经直接拿 session.contactId 去比 Character.id / ChatContact.characterId，
+// contactId 存 contact_... 的老私聊会被整批判成「非好友」，消息页只剩内置小卷。
+const messageListSource = await readFile(new URL("../components/chat/chat-message-list.tsx", import.meta.url), "utf8");
+assert.doesNotMatch(messageListSource, /contactIds\.has\(s\.contactId\)/,
+  "private session list filtering must not compare a raw contactId against character IDs");
+assert.match(messageListSource, /resolveListCharacterId\(s\)/,
+  "private session list filtering must resolve the canonical character ID first");
+const settingsPanelSource = await readFile(new URL("../components/chat/chat-settings-panel.tsx", import.meta.url), "utf8");
+assert.doesNotMatch(settingsPanelSource, /removeChatContact\(session\.contactId\)/,
+  "deleting a friend must pass the canonical character ID, otherwise the contact is never removed");
+const historySearchSource = await readFile(new URL("../components/chat/chat-history-search.tsx", import.meta.url), "utf8");
+assert.match(historySearchSource, /resolveSessionCharacterId\(session\)/,
+  "chat history search must resolve canonical character IDs for session names");
+const mergeSource = await readFile(new URL("../lib/chat-session-merge.ts", import.meta.url), "utf8");
+assert.match(mergeSource, /resolveSessionCharacterId\(session\) \|\| session\.contactId/,
+  "duplicate-session detection must group private sessions by canonical character ID");
+
 
 
 // Exercise the actual chat-storage hydration/migration path with an in-memory

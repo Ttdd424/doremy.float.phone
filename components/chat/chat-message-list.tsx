@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useSyncExternalStore } from "react";
 import { ChevronLeft, SlidersHorizontal } from "lucide-react";
-import { CHAT_MESSAGE_PUSHED_EVENT, loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview } from "@/lib/chat-storage";
+import { CHAT_MESSAGE_PUSHED_EVENT, loadChatSessions, loadChatContacts, ChatSession, createOrGetSession, createGroupSession, pushChatMessage, addChatContact, loadChatMessages, getLastVisibleSessionMessage, getChatMessagePreview, resolveSessionCharacterId } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
 import { Character } from "@/lib/character-types";
 import { resolveUserIdentity, USER_IDENTITIES_UPDATED_EVENT } from "@/lib/settings-storage";
@@ -288,21 +288,40 @@ export function ChatMessageList({ onCloseApp, onOpenHistorySearch, activeSession
                 </div>
                 <div className="px-5 pt-2 flex flex-col">
                     {(() => {
-                            const contactIds = new Set(loadChatContacts().map(c => c.characterId));
                             const allChars = loadCharacters();
+                            // 好友判定统一按「规范角色 ID」比较：联系人表的 characterId 是唯一口径，
+                            // 会话侧先解析成规范角色 ID 再比。直接拿 session.contactId 去比会把
+                            // contactId 存成联系人 id（contact_...）的老私聊整批判成「非好友」，
+                            // 导致消息页只剩内置小卷、群聊正常、所有私聊消失（实报）。
+                            // 解析优先级与 resolveSessionCharacterId 一致，这里预算成映射避免逐个查找。
+                            const characterIds = new Set(allChars.map(c => c.id));
+                            const contacts = loadChatContacts();
+                            const contactCharacterIds = new Set(contacts.map(c => c.characterId));
+                            const contactById = new Map(contacts.map(c => [c.id, c.characterId]));
+                            const resolveListCharacterId = (s: ChatSession): string | null => {
+                                if (s.isGroup) return null;
+                                const explicit = typeof s.characterId === "string" ? s.characterId.trim() : "";
+                                if (explicit && characterIds.has(explicit)) return explicit;
+                                const mapped = contactById.get(s.contactId);
+                                if (mapped && characterIds.has(mapped)) return mapped;
+                                return characterIds.has(s.contactId) ? s.contactId : null;
+                            };
                             const keyword = listFilter.trim().toLowerCase();
                             const showMascot = mascotSettings.chatEnabled
                                 && listTab !== "group"
                                 && (!keyword || (mascotSettings.nickname || "AI助手").toLowerCase().includes(keyword));
                             const regularItems = [...sessions]
                             .filter(s => {
-                                if (!(s.isGroup || contactIds.has(s.contactId))) return false;
+                                // 私聊归属走规范化解析后再比联系人表，见上方 resolveListCharacterId 注释。
+                                // 解析不出来（角色卡已删）或已不是好友的私聊不显示。
+                                const listCharacterId = resolveListCharacterId(s);
+                                if (!s.isGroup && (!listCharacterId || !contactCharacterIds.has(listCharacterId))) return false;
                                 if (!hasSessionListContent(s.id)) return false;
                                 if (listTab === "private" && s.isGroup) return false;
                                 if (listTab === "group" && !s.isGroup) return false;
                                 if (!keyword) return true;
                                 if (s.isGroup) return (s.groupName || "群聊").toLowerCase().includes(keyword);
-                                const name = s.alias || allChars.find(c => c.id === s.contactId)?.name || "";
+                                const name = s.alias || allChars.find(c => c.id === listCharacterId)?.name || "";
                                 return name.toLowerCase().includes(keyword);
                             })
                             .sort((a, b) => {
@@ -758,7 +777,13 @@ function ContactPicker({ onClose, onSelect }: { onClose: () => void; onSelect: (
 
 function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, onSelect: () => void, isPinned?: boolean }) {
     const chars = loadCharacters();
-    const character = chars.find(c => c.id === session.contactId);
+    // contactId 可能是联系人 id（contact_...），统一解析成规范角色 ID 再取角色卡，
+    // 否则老会话的名字会退化成 User_xxxx 这种原始标识符。
+    const resolvedCharacterId = resolveSessionCharacterId(session);
+    const character = chars.find(c => c.id === resolvedCharacterId)
+        // 联系人映射已断（如刚删好友）时按会话自带字段兜底，名字不至于丢
+        || chars.find(c => c.id === session.characterId)
+        || chars.find(c => c.id === session.contactId);
     const lastVisibleMessage = getLastVisibleSessionMessage(session.id);
     const lastOfflineTurn = getLastChatOfflineTurn(session.id);
     // 线下记录比线上消息新时（含只在线下聊过的会话），列表展示线下摘要
@@ -814,7 +839,7 @@ function SessionItem({ session, onSelect, isPinned }: { session: ChatSession, on
             <div className="flex-1 overflow-hidden h-[48px] flex flex-col justify-center gap-1">
                 <div className="flex justify-between items-center">
                     <span className="ts-16 font-medium text-[var(--c-text-title)] truncate">
-                        {isGroup ? (session.groupName || "群聊") : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
+                        {isGroup ? (session.groupName || "群聊") : (session.alias || character?.name || "未知角色")}
                     </span>
                     <span className="ts-12 text-[var(--c-icon)] font-medium">
                         {formatChatUiTime(displayTime)}

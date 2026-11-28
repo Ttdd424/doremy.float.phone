@@ -15,6 +15,7 @@ import {
     getChatMessagePreview,
     pushChatMessage,
     removeChatContact,
+    resolveSessionCharacterId,
     normalizeVisionImagePromptLimit,
     MAX_VISION_IMAGE_PROMPT_LIMIT,
     loadChatAppSettings,
@@ -1908,9 +1909,13 @@ export function ChatSettingsPanel({
                     confirmLabel="删除"
                     cancelLabel="取消"
                     onConfirm={() => {
-                        removeChatContact(session.contactId);
+                        // 必须用规范角色 ID：contactId 可能是联系人 id（contact_...），
+                        // 直接传进去匹配不到 contacts[].characterId，好友根本删不掉
+                        // （实报：删除好友后角色仍在联系人列表）。
+                        const targetCharacterId = resolveSessionCharacterId(session) || session.contactId;
+                        removeChatContact(targetCharacterId);
                         // Fire-and-forget: AI reacts to being deleted
-                        triggerDeleteFriendReaction(session.contactId).catch(() => {});
+                        triggerDeleteFriendReaction(targetCharacterId).catch(() => {});
                         setShowConfirmDelete(false);
                         onDeleteFriend?.();
                     }}

@@ -11,6 +11,7 @@ import {
     addChatContact,
     createOrGetSession,
     saveChatSessions,
+    resolveSessionCharacterId,
 } from "./chat-storage";
 import { generateChatCompletion, flattenCompletionResult } from "./chat-engine";
 import { resolveUserIdentity } from "./settings-storage";
@@ -29,6 +30,20 @@ import { kvSet, registerDynamicPrefix } from "./kv-db";
 const MAX_ROUNDS = 3;
 
 /**
+ * 按规范角色 ID 找这条私聊会话。
+ * 优先用 resolveSessionCharacterId（会走联系人映射），但「删除好友」流程里联系人
+ * 可能已经被移除，映射已断——所以再按 session.characterId / session.contactId
+ * 直接兜底，避免老数据（contactId 存 contact_...）整个反应链路静默失效。
+ */
+function findPrivateSessionForCharacter(characterId: string): ChatSession | null {
+    const sessions = loadChatSessions();
+    const privates = sessions.filter(s => !s.isGroup);
+    const byResolve = privates.find(s => resolveSessionCharacterId(s) === characterId);
+    if (byResolve) return byResolve;
+    return privates.find(s => s.characterId === characterId || s.contactId === characterId) || null;
+}
+
+/**
  * Trigger AI reaction after user deletes a friend.
  * Fire-and-forget — call from settings panel, results appear in "新的朋友" UI.
  */
@@ -40,8 +55,11 @@ export async function triggerDeleteFriendReaction(characterId: string): Promise<
     const userName = resolveUserIdentity(characterId, "chat")?.name ?? "用户";
 
     // Find the session (still exists after contact removal)
-    const sessions = loadChatSessions();
-    const session = sessions.find(s => !s.isGroup && s.contactId === characterId);
+    // 按规范角色 ID 匹配：老数据的 contactId 可能存的是联系人 id（contact_...），
+    // 直接比 characterId 会找不到会话，AI 的「被删好友」反应就整段不触发。
+    // 调用方是先删联系人再调这里，所以联系人映射已断，必须再用 session.contactId /
+    // session.characterId 兜底匹配。
+    const session = findPrivateSessionForCharacter(characterId);
     if (!session) return;
 
     // Push system message recording the deletion
@@ -70,8 +88,7 @@ export async function triggerRejectReaction(characterId: string): Promise<void> 
 
     if (currentRound >= MAX_ROUNDS) return; // No more attempts
 
-    const sessions = loadChatSessions();
-    const session = sessions.find(s => !s.isGroup && s.contactId === characterId);
+    const session = findPrivateSessionForCharacter(characterId);
     if (!session) return;
 
     // Push system message recording the rejection

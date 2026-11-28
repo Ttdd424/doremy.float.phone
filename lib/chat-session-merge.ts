@@ -10,6 +10,7 @@ import {
     getLastVisibleSessionMessage,
     loadChatSessions,
     reassignChatSessionMessages,
+    resolveSessionCharacterId,
     saveChatSessions,
     type ChatSession,
 } from "./chat-storage";
@@ -54,7 +55,9 @@ function sessionActivityTime(session: ChatSession): number {
 }
 
 function duplicateKey(session: ChatSession): string | null {
-    if (!session.isGroup) return `direct:${session.contactId}`;
+    // 单聊去重键用规范角色 ID：老数据 session.contactId 可能存 contact_... 联系人 id，
+    // 与存角色 id 的新会话本该是同一个角色，按原始 contactId 分组会漏掉重复。
+    if (!session.isGroup) return `direct:${resolveSessionCharacterId(session) || session.contactId}`;
     const members = [...(session.participantIds || [])].sort();
     if (members.length === 0) return null;
     return `group:${session.isSpectator ? "1" : "0"}:${members.join(",")}`;
@@ -80,12 +83,13 @@ export function findDuplicateSessionGroups(): DuplicateSessionGroup[] {
         const sorted = [...list].sort((a, b) => sessionActivityTime(b) - sessionActivityTime(a));
         const head = sorted[0];
         const isGroup = Boolean(head.isGroup);
+        const headCharacterId = isGroup ? "" : (resolveSessionCharacterId(head) || head.contactId);
         const memberNames = isGroup
             ? (head.participantIds || []).map(nameOf)
-            : [nameOf(head.contactId)];
+            : [nameOf(headCharacterId)];
         const label = isGroup
             ? [...new Set(sorted.map(s => s.groupName?.trim() || "群聊"))].map(name => `「${name}」`).join("")
-            : (head.alias?.trim() || nameOf(head.contactId));
+            : (head.alias?.trim() || nameOf(headCharacterId));
         groups.push({
             key,
             signature: `${key}|${sorted.map(s => s.id).sort().join("+")}`,
